@@ -1,0 +1,7 @@
+In this directory keep you public and private RSA keys.
+
+Command to generate RSA private key:
+openssl genrsa -out app.rsa 2048
+
+Command to generate RSA public key:
+openssl rsa -in app.rsa -pubout > app.rsa.pub
