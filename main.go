@@ -7,7 +7,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"time"
+
+	"github.com/gorilla/handlers"
 
 	"github.com/gorilla/mux"
 
@@ -123,45 +126,47 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Only accessible with a valid token
-func authHandler(w http.ResponseWriter, r *http.Request) {
+func authHandler(nextHandler http.Handler) http.Handler {
 	// Validate the token
 	// the header should have the token in the following schema.
 	// Authorization: Bearer <token>
-	token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor, keyLookupFunc)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor, keyLookupFunc)
 
-	if err != nil {
-		switch err.(type) {
-		case *jwt.ValidationError: // something was wrong during the validation
-			vErr := err.(*jwt.ValidationError)
+		if err != nil {
+			switch err.(type) {
+			case *jwt.ValidationError: // something was wrong during the validation
+				vErr := err.(*jwt.ValidationError)
 
-			switch vErr.Errors {
-			case jwt.ValidationErrorExpired:
-				w.WriteHeader(http.StatusUnauthorized)
-				fmt.Fprintln(w, "Token Expired, get a new one.")
-				return
+				switch vErr.Errors {
+				case jwt.ValidationErrorExpired:
+					w.WriteHeader(http.StatusUnauthorized)
+					fmt.Fprintln(w, "Token Expired, get a new one.")
+					return
 
-			default:
+				default:
+					w.WriteHeader(http.StatusInternalServerError)
+					fmt.Fprintln(w, "Error while parsing token")
+					log.Printf("Validation error: %+v\n", vErr.Errors)
+					return
+				}
+
+			default: // something else went wrong
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintln(w, "Error while parsing token")
-				log.Printf("Validation error: %+v\n", vErr.Errors)
+				fmt.Fprintln(w, "Error while Parsing Token!")
+				log.Printf("Token parse errors: %+v", err)
 				return
 			}
-
-		default: // something else went wrong
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintln(w, "Error while Parsing Token!")
-			log.Printf("Token parse errors: %+v", err)
-			return
 		}
-	}
 
-	if token.Valid {
-		response := Response{"Authorized to the system"}
-		jsonResponse(response, w)
-	} else {
-		response := Response{"Invalid token"}
-		jsonResponse(response, w)
-	}
+		if token.Valid {
+			nextHandler.ServeHTTP(w, r)
+			// jsonResponse(response, w)
+		} else {
+			response := Response{"You are not authenticated"}
+			jsonResponse(response, w)
+		}
+	})
 }
 
 func keyLookupFunc(*jwt.Token) (interface{}, error) {
@@ -169,14 +174,25 @@ func keyLookupFunc(*jwt.Token) (interface{}, error) {
 	return verifyKey, nil
 }
 
+func secretMessage(w http.ResponseWriter, r *http.Request) {
+	response := Response{"Egg came before hen!"}
+	jsonResponse(response, w)
+}
+
 func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/login", loginHandler).Methods("POST")
-	r.HandleFunc("/auth", authHandler).Methods("POST")
+	// r.HandleFunc("/auth", authHandler).Methods("POST")
+
+	message1Handler := http.HandlerFunc(secretMessage)
+
+	// authHandler is used as a middleware to protect the secret of
+	// universe from unauthenticated user.
+	r.Handle("/message1", authHandler(message1Handler)).Methods("GET")
 
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: r,
+		Handler: handlers.LoggingHandler(os.Stdout, r), // App wide logging.
 	}
 	log.Println("Listening...")
 	server.ListenAndServe()
